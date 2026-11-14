@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HaLow Camera</title>
+  <style>
+    :root { font-family: Arial, sans-serif; color: #202124; background: #f8fafd; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; }
+    main { max-width: 900px; margin: auto; }
+    h1 { font-size: 24px; margin: 0 0 16px; font-weight: 600; }
+    .card { background: white; border: 1px solid #dadce0; border-radius: 20px; overflow: hidden; box-shadow: 0 3px 12px #20212412; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 16px 20px; }
+    .toolbar label { font-weight: 600; }
+    select { border: 1px solid #dadce0; border-radius: 10px; padding: 10px; background: white; color: #202124; font-size: 15px; }
+    .status { margin-left: auto; color: #5f6368; }
+    .status.live { color: #188038; }
+    .view { min-height: 240px; background: #202124; display: grid; place-items: center; }
+    img { display: block; width: 100%; height: auto; max-height: 75vh; object-fit: contain; }
+    .metrics { display: flex; gap: 32px; flex-wrap: wrap; padding: 18px 20px; }
+    .metric strong { display: block; color: #1a73e8; font-size: 21px; margin-top: 5px; }
+    .metric span { font-size: 13px; color: #5f6368; }
+    .note { margin: 14px 2px; color: #5f6368; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>HaLow Camera</h1>
+    <div class="card">
+      <div class="toolbar">
+        <label for="size">Resolution</label>
+        <select id="size">
+          <option value="qvga">320 × 240</option>
+          <option value="vga" selected>640 × 480</option>
+        </select>
+        <span id="status" class="status">Connecting…</span>
+      </div>
+      <div class="view"><img id="picture" alt="Live camera feed"></div>
+      <div class="metrics">
+        <div class="metric"><span>Received bitrate</span><strong id="rate">0.00 Mb/s</strong></div>
+        <div class="metric"><span>Peak bitrate</span><strong id="peak">0.00 Mb/s</strong></div>
+        <div class="metric"><span>Frames received</span><strong id="fps">0 fps</strong></div>
+        <div class="metric"><span>Image size</span><strong id="actual">—</strong></div>
+      </div>
+    </div>
+    <p class="note">Bitrate is measured from bytes received by this browser. Changing resolution briefly reconnects the feed.</p>
+  </main>
+  <script>
+    const picture = document.getElementById('picture');
+    const status = document.getElementById('status');
+    const size = document.getElementById('size');
+    const rate = document.getElementById('rate');
+    const peak = document.getElementById('peak');
+    const fps = document.getElementById('fps');
+    const actual = document.getElementById('actual');
+    let controller, generation = 0, buffer = new Uint8Array(0);
+    let bytes = 0, frames = 0, best = 0, lastImageUrl = null;
+
+    function setStatus(message, live) {
+      status.textContent = message;
+      status.classList.toggle('live', live);
+    }
+    function findMarker(data, first, second, from) {
+      for (let i = from; i < data.length - 1; i++) {
+        if (data[i] === first && data[i + 1] === second) return i;
+      }
+      return -1;
+    }
+    function appendAndDisplay(chunk) {
+      const joined = new Uint8Array(buffer.length + chunk.length);
+      joined.set(buffer);
+      joined.set(chunk, buffer.length);
+      buffer = joined;
+      while (true) {
+        const start = findMarker(buffer, 0xff, 0xd8, 0);
+        if (start < 0) {
+          buffer = buffer.slice(Math.max(0, buffer.length - 1));
+          return;
+        }
+        const end = findMarker(buffer, 0xff, 0xd9, start + 2);
+        if (end < 0) {
+          buffer = buffer.slice(start);
+          if (buffer.length > 1000000) buffer = new Uint8Array(0);
+          return;
+        }
+        const url = URL.createObjectURL(new Blob([buffer.slice(start, end + 2)], {type: 'image/jpeg'}));
+        const oldUrl = lastImageUrl;
+        picture.onload = () => {
+          actual.textContent = picture.naturalWidth + ' × ' + picture.naturalHeight;
+          if (oldUrl) URL.revokeObjectURL(oldUrl);
+        };
+        picture.src = url;
+        lastImageUrl = url;
+        frames++;
+        setStatus('Live', true);
+        buffer = buffer.slice(end + 2);
+      }
+    }
+    async function connect(myGeneration) {
+      while (myGeneration === generation) {
+        controller = new AbortController();
+        buffer = new Uint8Array(0);
+        setStatus('Connecting…', false);
+        try {
+          const response = await fetch('/stream?size=' + size.value, {signal: controller.signal, cache: 'no-store'});
+          if (!response.ok || !response.body) throw new Error('Stream unavailable');
+          const reader = response.body.getReader();
+          while (myGeneration === generation) {
+            const result = await reader.read();
+            if (result.done) break;
+            bytes += result.value.length;
+            appendAndDisplay(result.value);
+          }
+          reader.cancel();
+        } catch (error) {
+          if (myGeneration === generation) setStatus('Reconnecting…', false);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+    }
+    function restart() {
+      generation++;
+      if (controller) controller.abort();
+      bytes = 0;
+      frames = 0;
+      best = 0;
+      peak.textContent = '0.00 Mb/s';
+      connect(generation);
+    }
+    size.addEventListener('change', restart);
+    setInterval(() => {
+      const mbps = bytes * 8 / 1000000;
+      rate.textContent = mbps.toFixed(2) + ' Mb/s';
+      if (mbps > best) {
+        best = mbps;
+        peak.textContent = best.toFixed(2) + ' Mb/s';
+      }
+      fps.textContent = frames + ' fps';
+      bytes = 0;
+      frames = 0;
+    }, 1000);
+    restart();
+  </script>
+</body>
+</html>
