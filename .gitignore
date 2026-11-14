@@ -1,0 +1,5 @@
+/mm-iot-esp32/
+**/local_config.h
+**/build/
+*.bin
+*.elf
