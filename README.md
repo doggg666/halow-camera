@@ -6,7 +6,7 @@ The OV3660 camera was confirmed on the test board by sensor PID `0x3660`. The pa
 
 ## Get the source
 
-Run `./setup.sh` from this repository. It clones Seeed's SDK at the pinned commit into `mm-iot-esp32/` and copies the files in `overlay/` over the matching upstream paths. The vendor SDK stays in its own Git checkout so its origin and local changes are visible.
+Run `sh setup.sh` from this repository. It clones Seeed's SDK at the pinned commit into `mm-iot-esp32/` and copies the files in `overlay/` over the matching upstream paths. The vendor SDK stays in its own Git checkout so its origin and local changes are visible.
 
 ## Configure and build
 
